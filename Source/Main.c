@@ -6,6 +6,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "Crosh.h"
+
 #define INPUT_MAXIMUM_LENGTH 65536
 #define MAX_ARGUMENTS 256
 
@@ -26,7 +28,7 @@ int main(int Argc, char *Argv[]) {
     gethostname(HostName, sizeof(HostName));
     getcwd(Pwd, sizeof(Pwd));
 
-    const char *Home = User ? User->pw_dir : "";
+    char *Home = User ? User->pw_dir : "";
     if (User && strncmp(Pwd, Home, strlen(Home)) == 0 &&
         (Pwd[strlen(Home)] == '/' || Pwd[strlen(Home)] == '\0')) {
       printf("[%s@%s ~%s]$ ", UserName, HostName, Pwd + strlen(Home));
@@ -36,30 +38,8 @@ int main(int Argc, char *Argv[]) {
 
     fgets(Buffer, sizeof(Buffer), stdin);
 
-    int Count = 0;
-    char *Token = strtok(Buffer, " \t\n");
-
-    while (Token != NULL && Count < MAX_ARGUMENTS - 1) {
-      Arguments[Count++] = Token;
-      Token = strtok(NULL, " \t\n");
-    }
-
-    Arguments[Count] = NULL;
-
-    if (Count == 0) {
-      continue;
-    }
-
-    pid_t Process = fork();
-    if (Process == 0) {
-      execvp(Arguments[0], Arguments);
-      fprintf(stderr, "crosh: %s: %s\n", Arguments[0], strerror(errno));
-      _exit(127);
-    } else if (Process > 0) {
-      waitpid(Process, NULL, 0);
-    } else {
-      perror("fork");
-    }
+    const char *LuaCode = CroshCompileBashToLua(Buffer);
+    puts(LuaCode);
   }
 
   return 0;
