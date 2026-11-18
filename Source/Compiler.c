@@ -204,6 +204,11 @@ static BashToken *CroshTokenizeBash(char *Text) {
       goto Error;
 
     size_t Length = Text - Start;
+    if (Quote) {
+      Start++;
+      Length -= 2;
+    }
+
     char *Value = malloc(Length + 1);
     if (!Value)
       goto Error;
