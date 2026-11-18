@@ -12,12 +12,15 @@
 #define MAX_ARGUMENTS 256
 
 char Buffer[INPUT_MAXIMUM_LENGTH] = {0};
-char *Arguments[MAX_ARGUMENTS] = {{0}};
+char *Arguments[MAX_ARGUMENTS] = {0};
 char UserName[256] = {0};
 char HostName[256] = {0};
 char Pwd[4096] = {0};
 
 int main(int Argc, char *Argv[]) {
+  (void)Argc;
+  (void)Argv;
+
   while (true) {
     memset(Buffer, 0, sizeof(Buffer));
 

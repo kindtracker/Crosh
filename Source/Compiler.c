@@ -79,69 +79,45 @@ typedef struct BashToken {
 } BashToken;
 
 static char *CroshBashTokenKindToString(BashTokenKind Kind) {
-  switch (Kind) {
-  case TOKEN_IDENT:
-    return "Ident";
-  case TOKEN_PIPE:
-    return "Pipe";
-  case TOKEN_PIPE_BOTH:
-    return "PipeBoth";
-  case TOKEN_AND:
-    return "And";
-  case TOKEN_OR:
-    return "Or";
-  case TOKEN_EQUAL:
-    return "Equal";
-  case TOKEN_BACKGROUND:
-    return "Background";
-  case TOKEN_SEMICOLON:
-    return "Semicolon";
-  case TOKEN_REDIRECT_OUTPUT:
-    return "RedirectOutput";
-  case TOKEN_REDIRECT_APPEND:
-    return "RedirectAppend";
-  case TOKEN_REDIRECT_INPUT:
-    return "RedirectInput";
-  case TOKEN_REDIRECT_DUPLICATE:
-    return "RedirectDuplicate";
-  case TOKEN_STRING:
-    return "String";
-  case TOKEN_EOF:
-    return "Eof";
-  }
+  static char *Names[] = {"Ident",
+                          "Pipe",
+                          "PipeBoth",
+                          "And",
+                          "Or",
+                          "Equal",
+                          "Background",
+                          "Semicolon",
+                          "RedirectOutput",
+                          "RedirectAppend",
+                          "RedirectInput",
+                          "RedirectDuplicate",
+                          "String",
+                          "Eof"};
 
-  return "UNKNOWN";
+  return Kind >= TOKEN_IDENT && Kind <= TOKEN_EOF ? Names[Kind] : "Unknown";
 }
 
 static BashToken *CroshNewToken(BashTokenKind Kind, char *Value) {
-  BashToken *Token = malloc(sizeof(BashToken));
-
-  if (Token == NULL)
+  BashToken *Token = calloc(1, sizeof(BashToken));
+  if (!Token)
     return NULL;
 
   Token->Kind = Kind;
-  Token->Value = NULL;
-  Token->Next = NULL;
+  Token->Value = Value ? strdup(Value) : NULL;
 
-  if (Value != NULL) {
-    Token->Value = strdup(Value);
-
-    if (Token->Value == NULL) {
-      free(Token);
-      return NULL;
-    }
+  if (Value && !Token->Value) {
+    free(Token);
+    return NULL;
   }
 
   return Token;
 }
 
 static void CroshFreeTokens(BashToken *Token) {
-  while (Token != NULL) {
+  while (Token) {
     BashToken *Next = Token->Next;
-
     free(Token->Value);
     free(Token);
-
     Token = Next;
   }
 }
@@ -149,148 +125,94 @@ static void CroshFreeTokens(BashToken *Token) {
 static int CroshAddToken(BashToken **Head, BashToken **Tail, BashTokenKind Kind,
                          char *Value) {
   BashToken *Token = CroshNewToken(Kind, Value);
-
-  if (Token == NULL)
+  if (!Token)
     return 0;
 
-  if (*Head == NULL)
-    *Head = Token;
-  else
+  if (*Tail)
     (*Tail)->Next = Token;
+  else
+    *Head = Token;
 
   *Tail = Token;
   return 1;
 }
 
 static BashToken *CroshTokenizeBash(char *Text) {
-  BashToken *Head = NULL;
-  BashToken *Tail = NULL;
+  BashToken *Head = NULL, *Tail = NULL;
 
-  while (*Text != '\0') {
-    if (*Text == ' ' || *Text == '\t') {
+  while (*Text) {
+    if (isspace((unsigned char)*Text)) {
       Text++;
       continue;
     }
 
-    if (*Text == '\n') {
-      Text++;
+    static struct {
+      char *Text;
+      BashTokenKind Kind;
+    } Operators[] = {{"|&", TOKEN_PIPE_BOTH},
+                     {"&&", TOKEN_AND},
+                     {"||", TOKEN_OR},
+                     {">>", TOKEN_REDIRECT_APPEND},
+                     {">&", TOKEN_REDIRECT_DUPLICATE},
+                     {"|", TOKEN_PIPE},
+                     {"&", TOKEN_BACKGROUND},
+                     {";", TOKEN_SEMICOLON},
+                     {">", TOKEN_REDIRECT_OUTPUT},
+                     {"<", TOKEN_REDIRECT_INPUT},
+                     {"=", TOKEN_EQUAL}};
+
+    int Matched = 0;
+
+    for (size_t i = 0; i < sizeof(Operators) / sizeof(*Operators); i++) {
+      size_t Length = strlen(Operators[i].Text);
+
+      if (strncmp(Text, Operators[i].Text, Length) == 0) {
+        if (!CroshAddToken(&Head, &Tail, Operators[i].Kind, NULL))
+          goto Error;
+
+        Text += Length;
+        Matched = 1;
+        break;
+      }
+    }
+
+    if (Matched)
       continue;
-    }
-
-    if (strncmp(Text, "|&", 2) == 0) {
-      if (!CroshAddToken(&Head, &Tail, TOKEN_PIPE_BOTH, NULL))
-        goto Error;
-      Text += 2;
-      continue;
-    }
-
-    if (strncmp(Text, "&&", 2) == 0) {
-      if (!CroshAddToken(&Head, &Tail, TOKEN_AND, NULL))
-        goto Error;
-      Text += 2;
-      continue;
-    }
-
-    if (strncmp(Text, "||", 2) == 0) {
-      if (!CroshAddToken(&Head, &Tail, TOKEN_OR, NULL))
-        goto Error;
-      Text += 2;
-      continue;
-    }
-
-    if (strncmp(Text, ">>", 2) == 0) {
-      if (!CroshAddToken(&Head, &Tail, TOKEN_REDIRECT_APPEND, NULL))
-        goto Error;
-      Text += 2;
-      continue;
-    }
-
-    if (strncmp(Text, ">&", 2) == 0) {
-      if (!CroshAddToken(&Head, &Tail, TOKEN_REDIRECT_DUPLICATE, NULL))
-        goto Error;
-      Text += 2;
-      continue;
-    }
-
-    BashTokenKind Operator;
-
-    switch (*Text) {
-    case '|':
-      Operator = TOKEN_PIPE;
-      break;
-    case '&':
-      Operator = TOKEN_BACKGROUND;
-      break;
-    case ';':
-      Operator = TOKEN_SEMICOLON;
-      break;
-    case '>':
-      Operator = TOKEN_REDIRECT_OUTPUT;
-      break;
-    case '<':
-      Operator = TOKEN_REDIRECT_INPUT;
-      break;
-    case '=':
-      Operator = TOKEN_EQUAL;
-      break;
-    default:
-      Operator = TOKEN_EOF;
-      break;
-    }
-
-    if (Operator != TOKEN_EOF) {
-      if (!CroshAddToken(&Head, &Tail, Operator, NULL))
-        goto Error;
-      Text++;
-      continue;
-    }
 
     char *Start = Text;
     char Quote = '\0';
 
-    while (*Text != '\0') {
-      if (Quote != '\0') {
-        if (*Text == Quote) {
-          Text++;
+    while (*Text) {
+      if (Quote) {
+        if (*Text++ == Quote)
           break;
-        }
-
-        Text++;
         continue;
       }
 
       if (*Text == '\'' || *Text == '"') {
-        Quote = *Text;
-        Text++;
+        Quote = *Text++;
         continue;
       }
 
-      if (isspace((unsigned char)*Text) || strchr("|&;><=", *Text) != NULL)
+      if (isspace((unsigned char)*Text) || strchr("|&;><=", *Text))
         break;
 
       Text++;
     }
 
-    if (Quote != '\0') {
-      Start++;
-      Text--;
-    }
+    if (Quote && Text[-1] != Quote)
+      goto Error;
 
-    size_t Length = (size_t)(Text - Start);
+    size_t Length = Text - Start;
     char *Value = malloc(Length + 1);
-
-    if (Quote != '\0') {
-      Text++;
-    }
-
-    if (Value == NULL)
+    if (!Value)
       goto Error;
 
     memcpy(Value, Start, Length);
     Value[Length] = '\0';
 
-    int Success = CroshAddToken(
-        &Head, &Tail, Quote != '\0' ? TOKEN_STRING : TOKEN_IDENT, Value);
+    int Success =
+        CroshAddToken(&Head, &Tail, Quote ? TOKEN_STRING : TOKEN_IDENT, Value);
 
     free(Value);
 
@@ -325,7 +247,10 @@ static BashAst *CroshCompileBashToAst(char *Text) {
   return NULL;
 }
 
-static char *CroshCompileAstToLua(BashAst *Ast) {}
+static char *CroshCompileAstToLua(BashAst *Ast) {
+  (void)Ast;
+  return "Meow";
+}
 
 void CroshFreeBashAst(BashAst *Ast) {
   if (Ast == NULL)
