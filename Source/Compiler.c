@@ -235,28 +235,6 @@ Error:
   return NULL;
 }
 
-static BashAst *CroshCompileBashToAst(char *Text) {
-  BashToken *Tokens = CroshTokenizeBash(Text);
-
-  BashToken *Token = Tokens;
-  int Idx = 1;
-  while (Token) {
-    printf("Token %d\n", Idx);
-    printf("  Kind='%s'\n", CroshBashTokenKindToString(Token->Kind));
-    printf("  Value='%s'\n", Token->Value);
-    Idx++;
-
-    Token = Token->Next;
-  }
-
-  return NULL;
-}
-
-static char *CroshCompileAstToLua(BashAst *Ast) {
-  (void)Ast;
-  return "Meow";
-}
-
 void CroshFreeBashAst(BashAst *Ast) {
   if (Ast == NULL)
     return;
@@ -300,6 +278,278 @@ void CroshFreeBashAst(BashAst *Ast) {
   }
 
   free(Ast);
+}
+
+static int CroshIsWord(BashToken *T) {
+  return T && (T->Kind == TOKEN_IDENT || T->Kind == TOKEN_STRING);
+}
+
+static int CroshIsRedirection(BashToken *T) {
+  return T && (T->Kind >= TOKEN_REDIRECT_OUTPUT &&
+               T->Kind <= TOKEN_REDIRECT_DUPLICATE);
+}
+
+static int CroshAppendAst(BashAst ***List, unsigned int *Count, BashAst *Ast) {
+  BashAst **New = realloc(*List, (*Count + 1) * sizeof(*New));
+  if (!New)
+    return 0;
+
+  *List = New;
+  (*List)[(*Count)++] = Ast;
+  return 1;
+}
+
+static int CroshAppendArgument(BashAst *Ast, char *Value) {
+  char **New =
+      realloc(Ast->Command.Arguments, (Ast->Command.Count + 1) * sizeof(*New));
+  if (!New)
+    return 0;
+
+  Ast->Command.Arguments = New;
+  New[Ast->Command.Count++] = strdup(Value);
+  return New[Ast->Command.Count - 1] != NULL;
+}
+
+static BashAst *CroshParseCommand(BashToken **T) {
+  BashAst *Command = calloc(1, sizeof(*Command));
+  if (!Command)
+    return NULL;
+
+  Command->Kind = BASH_AST_COMMAND;
+  BashAst *Root = Command;
+  int Found = 0;
+
+  while (CroshIsWord(*T) || CroshIsRedirection(*T)) {
+    if (CroshIsWord(*T)) {
+      if (!CroshAppendArgument(Command, (*T)->Value))
+        goto Error;
+      *T = (*T)->Next;
+    } else {
+      BashTokenKind Kind = (*T)->Kind;
+      *T = (*T)->Next;
+
+      if (!CroshIsWord(*T))
+        goto Error;
+
+      BashAst *Redir = calloc(1, sizeof(*Redir));
+      if (!Redir)
+        goto Error;
+
+      Redir->Kind = BASH_AST_REDIRECTION;
+      Redir->Redirection.Command = Root;
+      Redir->Redirection.FileDescriptor = Kind == TOKEN_REDIRECT_INPUT ? 0 : 1;
+      Redir->Redirection.Target = strdup((*T)->Value);
+      Redir->Redirection.Append = Kind == TOKEN_REDIRECT_APPEND;
+
+      if (!Redir->Redirection.Target) {
+        free(Redir);
+        goto Error;
+      }
+
+      Root = Redir;
+      *T = (*T)->Next;
+    }
+
+    Found = 1;
+  }
+
+  if (!Found)
+    goto Error;
+  return Root;
+
+Error:
+  CroshFreeBashAst(Root);
+  return NULL;
+}
+
+static BashAst *CroshParsePipeline(BashToken **T) {
+  BashAst *First = CroshParseCommand(T);
+  if (!First)
+    return NULL;
+
+  if ((*T)->Kind != TOKEN_PIPE && (*T)->Kind != TOKEN_PIPE_BOTH)
+    return First;
+
+  BashAst *Pipeline = calloc(1, sizeof(*Pipeline));
+  if (!Pipeline) {
+    CroshFreeBashAst(First);
+    return NULL;
+  }
+
+  Pipeline->Kind = BASH_AST_PIPELINE;
+  CroshAppendAst(&Pipeline->Pipeline.Commands, &Pipeline->Pipeline.Count,
+                 First);
+
+  while ((*T)->Kind == TOKEN_PIPE || (*T)->Kind == TOKEN_PIPE_BOTH) {
+    *T = (*T)->Next;
+
+    BashAst *Command = CroshParseCommand(T);
+    if (!Command || !CroshAppendAst(&Pipeline->Pipeline.Commands,
+                                    &Pipeline->Pipeline.Count, Command)) {
+      CroshFreeBashAst(Command);
+      CroshFreeBashAst(Pipeline);
+      return NULL;
+    }
+  }
+
+  return Pipeline;
+}
+
+static BashAst *CroshParseAndOr(BashToken **T) {
+  BashAst *Left = CroshParsePipeline(T);
+  if (!Left)
+    return NULL;
+
+  while ((*T)->Kind == TOKEN_AND || (*T)->Kind == TOKEN_OR) {
+    BashAstKind Kind = (*T)->Kind == TOKEN_AND ? BASH_AST_AND : BASH_AST_OR;
+    *T = (*T)->Next;
+
+    BashAst *Right = CroshParsePipeline(T);
+    if (!Right) {
+      CroshFreeBashAst(Left);
+      return NULL;
+    }
+
+    BashAst *Binary = calloc(1, sizeof(*Binary));
+    if (!Binary) {
+      CroshFreeBashAst(Left);
+      CroshFreeBashAst(Right);
+      return NULL;
+    }
+
+    Binary->Kind = Kind;
+    Binary->Binary.Left = Left;
+    Binary->Binary.Right = Right;
+    Left = Binary;
+  }
+
+  return Left;
+}
+
+static BashAst *CroshParseBash(BashToken **T) {
+  BashAst *Program = calloc(1, sizeof(*Program));
+  if (!Program)
+    return NULL;
+
+  Program->Kind = BASH_AST_PROGRAM;
+
+  while (*T && (*T)->Kind != TOKEN_EOF) {
+    if ((*T)->Kind == TOKEN_SEMICOLON) {
+      *T = (*T)->Next;
+      continue;
+    }
+
+    BashAst *Command = CroshParseAndOr(T);
+    if (!Command)
+      goto Error;
+
+    int Background = (*T)->Kind == TOKEN_BACKGROUND;
+
+    if (Background) {
+      *T = (*T)->Next;
+
+      BashAst *Node = calloc(1, sizeof(*Node));
+      if (!Node) {
+        CroshFreeBashAst(Command);
+        goto Error;
+      }
+
+      Node->Kind = BASH_AST_BACKGROUND;
+      Node->Background.Command = Command;
+      Command = Node;
+    }
+
+    if (!CroshAppendAst(&Program->Program.Commands, &Program->Program.Count,
+                        Command)) {
+      CroshFreeBashAst(Command);
+      goto Error;
+    }
+
+    if ((*T)->Kind == TOKEN_SEMICOLON)
+      *T = (*T)->Next;
+    else if ((*T)->Kind != TOKEN_EOF && !Background)
+      goto Error;
+  }
+
+  return Program;
+
+Error:
+  CroshFreeBashAst(Program);
+  return NULL;
+}
+
+static void CroshPrintAst(BashAst *Ast, int Depth) {
+  if (!Ast)
+    return;
+
+  for (int i = 0; i < Depth; i++)
+    printf("  ");
+
+  switch (Ast->Kind) {
+  case BASH_AST_PROGRAM:
+    puts("Program");
+    for (unsigned int i = 0; i < Ast->Program.Count; i++)
+      CroshPrintAst(Ast->Program.Commands[i], Depth + 1);
+    break;
+
+  case BASH_AST_COMMAND:
+    printf("Command");
+    for (unsigned int i = 0; i < Ast->Command.Count; i++)
+      printf(" %s", Ast->Command.Arguments[i]);
+    putchar('\n');
+    break;
+
+  case BASH_AST_PIPELINE:
+    puts("Pipeline");
+    for (unsigned int i = 0; i < Ast->Pipeline.Count; i++)
+      CroshPrintAst(Ast->Pipeline.Commands[i], Depth + 1);
+    break;
+
+  case BASH_AST_AND:
+  case BASH_AST_OR:
+    puts(Ast->Kind == BASH_AST_AND ? "And" : "Or");
+    CroshPrintAst(Ast->Binary.Left, Depth + 1);
+    CroshPrintAst(Ast->Binary.Right, Depth + 1);
+    break;
+
+  case BASH_AST_BACKGROUND:
+    puts("Background");
+    CroshPrintAst(Ast->Background.Command, Depth + 1);
+    break;
+
+  case BASH_AST_REDIRECTION:
+    printf("Redirection (fd=%d, target=%s, append=%d)\n",
+           Ast->Redirection.FileDescriptor, Ast->Redirection.Target,
+           Ast->Redirection.Append);
+    CroshPrintAst(Ast->Redirection.Command, Depth + 1);
+    break;
+  }
+}
+
+static BashAst *CroshCompileBashToAst(char *Text) {
+  BashToken *Tokens = CroshTokenizeBash(Text);
+
+  BashToken *Token = Tokens;
+  int Idx = 1;
+  while (Token) {
+    printf("Token %d\n", Idx);
+    printf("  Kind='%s'\n", CroshBashTokenKindToString(Token->Kind));
+    printf("  Value='%s'\n", Token->Value);
+    Idx++;
+
+    Token = Token->Next;
+  }
+
+  BashAst *Ast = CroshParseBash(&Tokens);
+  if (Ast)
+    CroshPrintAst(Ast, 0);
+
+  return Ast;
+}
+
+static char *CroshCompileAstToLua(BashAst *Ast) {
+  (void)Ast;
+  return "Meow";
 }
 
 char *CroshCompileBashToLua(char *Text) {
