@@ -152,6 +152,7 @@ end
 
 function Tokenizer:ReadIdent()
 	local Start = Tokenizer.Index
+	local StartCharacter = Tokenizer.Character
 
 	while #Tokenizer.Character > 0 do
 		if Whitespace[Tokenizer.Character] then
@@ -183,7 +184,11 @@ function Tokenizer:ReadIdent()
 
 	local Value = State.BashCode:sub(Start, Tokenizer.Index - 1)
 
-	Tokenizer:NewToken("Ident", Value)
+	if StartCharacter == "$" then
+		Tokenizer:NewToken("Variable", Value:sub(2))
+	else
+		Tokenizer:NewToken("Ident", Value)
+	end
 end
 
 function Tokenizer:ReadComment()
