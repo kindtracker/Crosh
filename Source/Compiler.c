@@ -7,6 +7,8 @@
 
 #include "Crosh.h"
 
+// #define DEBUG_MODE
+
 typedef enum {
   BASH_AST_PROGRAM,
   BASH_AST_COMMAND,
@@ -538,6 +540,7 @@ static void CroshPrintAst(BashAst *Ast, int Depth) {
 static BashAst *CroshCompileBashToAst(char *Text) {
   BashToken *Tokens = CroshTokenizeBash(Text);
 
+#ifdef DEBUG_MODE
   BashToken *Token = Tokens;
   int Idx = 1;
   while (Token) {
@@ -548,12 +551,16 @@ static BashAst *CroshCompileBashToAst(char *Text) {
 
     Token = Token->Next;
   }
+#endif
 
   BashAst *Ast = CroshParseBash(&Tokens);
+#ifdef DEBUG_MODE
   if (Ast)
     CroshPrintAst(Ast, 0);
+  */
+#endif
 
-  return Ast;
+      return Ast;
 }
 
 static int CroshAppendString(char **Buffer, char *Text) {
@@ -679,6 +686,10 @@ char *CroshCompileBashToLua(char *Text) {
   }
 
   char *LuaCode = CroshCompileAstToLua(Ast, 0);
+
+#ifdef DEBUG_MODE
+  puts(LuaCode);
+#endif
 
   CroshFreeBashAst(Ast);
   return LuaCode;

@@ -6,7 +6,7 @@ local CCompiler = "cc"
 local CXXCompiler = "cc"
 local Linker = "cc"
 local CFlags = "-O0 -Wall -Wextra -ISource"
-local LDFlags = "-O0"
+local LDFlags = "-O0 -llua5.1"
 
 local Output = "crosh"
 local OutputFolder = "Output"
