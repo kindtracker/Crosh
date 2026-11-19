@@ -50,25 +50,62 @@ function Logger:PrintTable(Table, Indent, Seen)
 	Seen[Table] = nil
 end
 
-local Operators = {
-	"||",
-	"&&",
-	"|",
-	"&",
-	";",
-	"(",
-	")",
-	"{",
-	"}",
-	"<",
-	">",
-	"!",
-}
-
 local Whitespace = {
 	[" "] = true,
 	["\t"] = true,
 	["\r"] = true,
+}
+
+local Operators = {
+	"&&",
+	"||",
+	"|&",
+	"|",
+	"&",
+	";",
+	";;",
+	";&",
+	";;&",
+	"(",
+	")",
+	"{",
+	"}",
+	"!",
+}
+
+local Redirections = {
+	"&>>",
+	"&>",
+	">>",
+	"<<-",
+	"<<<",
+	"<<",
+	"<&",
+	">&",
+	">|",
+	"<>",
+	">",
+	"<",
+}
+
+local Keywords = {
+	["if"] = true,
+	["then"] = true,
+	["else"] = true,
+	["elif"] = true,
+	["fi"] = true,
+	["for"] = true,
+	["while"] = true,
+	["until"] = true,
+	["do"] = true,
+	["done"] = true,
+	["case"] = true,
+	["esac"] = true,
+	["in"] = true,
+	["function"] = true,
+	["select"] = true,
+	["time"] = true,
+	["coproc"] = true,
 }
 
 function Tokenizer:NewToken(Kind, Value, Quote)
@@ -117,6 +154,14 @@ function Tokenizer:SkipWhitespace()
 end
 
 function Tokenizer:ReadOperator()
+	for _, Operator in ipairs(Redirections) do
+		if Tokenizer:Match(Operator) then
+			Tokenizer:NewToken("Redirection", Operator)
+			Tokenizer:Advance(#Operator)
+			return true
+		end
+	end
+
 	for _, Operator in ipairs(Operators) do
 		if Tokenizer:Match(Operator) then
 			Tokenizer:NewToken("Operator", Operator)
@@ -152,22 +197,29 @@ end
 
 function Tokenizer:ReadIdent()
 	local Start = Tokenizer.Index
-	local StartCharacter = Tokenizer.Character
 
 	while #Tokenizer.Character > 0 do
-		if Whitespace[Tokenizer.Character] then
+		if Whitespace[Tokenizer.Character] or Tokenizer.Character == "\n" then
 			break
 		end
 
-		if
-			Tokenizer:Match("|")
-			or Tokenizer:Match("&")
-			or Tokenizer:Match(";")
-			or Tokenizer:Match("(")
-			or Tokenizer:Match(")")
-			or Tokenizer:Match("<")
-			or Tokenizer:Match(">")
-		then
+		local IsOperator = false
+
+		for _, Operator in ipairs(Operators) do
+			if Tokenizer:Match(Operator) then
+				IsOperator = true
+				break
+			end
+		end
+
+		for _, Operator in ipairs(Redirections) do
+			if Tokenizer:Match(Operator) then
+				IsOperator = true
+				break
+			end
+		end
+
+		if IsOperator then
 			break
 		end
 
@@ -175,7 +227,11 @@ function Tokenizer:ReadIdent()
 			break
 		end
 
-		Tokenizer:Advance(1)
+		if Tokenizer.Character == "\\" then
+			Tokenizer:Advance(2)
+		else
+			Tokenizer:Advance(1)
+		end
 	end
 
 	if Tokenizer.Index == Start then
@@ -184,8 +240,12 @@ function Tokenizer:ReadIdent()
 
 	local Value = State.BashCode:sub(Start, Tokenizer.Index - 1)
 
-	if StartCharacter == "$" then
+	if Value:sub(1, 1) == "$" then
 		Tokenizer:NewToken("Variable", Value:sub(2))
+	elseif Value:match("^%d+$") and (Tokenizer:Match(">") or Tokenizer:Match("<")) then
+		Tokenizer:NewToken("Number", Value)
+	elseif Keywords[Value] then
+		Tokenizer:NewToken("Keyword", Value)
 	else
 		Tokenizer:NewToken("Ident", Value)
 	end
@@ -246,22 +306,75 @@ function Parser:ParseCommand()
 	local Command = {}
 	Command.Kind = "Command"
 	Command.Arguments = {}
+	Command.Redirections = {}
 
 	while Parser.Token and Parser.Token.Kind ~= "Newline" do
+		if Parser.Token.Kind == "Keyword" then
+			Parser.Token.Kind = "Ident"
+		elseif Parser.Token.Kind == "Operator" or Parser.Token.Kind == "Newline" or Parser.Token.Kind == "Keyword" then
+			break
+		elseif Parser.Token.Kind == "Number" then
+			local Number = Parser.Token.Value
+			Parser:Advance(1)
+
+			if not Parser.Token or Parser.Token.Kind ~= "Redirection" then
+				Parser:Advance(-1)
+				Parser.Token.Kind = "Ident"
+				table.insert(Command.Arguments, Parser.Token)
+				goto continue
+			end
+
+			local Operator = Parser.Token.Value
+			Parser:Advance(1)
+
+			if not Parser.Token then
+				Logger:Error("Expected redirection target")
+			end
+
+			table.insert(Command.Redirections, {
+				Kind = "Redirection",
+				Fd = Number,
+				Operator = Operator,
+				Target = Parser.Token,
+			})
+
+			Parser:Advance(1)
+		elseif Parser.Token.Kind == "Redirection" then
+			local Operator = Parser.Token.Value
+			Parser:Advance(1)
+
+			if not Parser.Token then
+				Logger:Error("Expected redirection target")
+			end
+
+			table.insert(Command.Redirections, {
+				Kind = "Redirection",
+				Fd = nil,
+				Operator = Operator,
+				Target = Parser.Token,
+			})
+
+			Parser:Advance(1)
+		end
+
 		table.insert(Command.Arguments, Parser.Token)
 		Parser:Advance(1)
+		::continue::
 	end
 
 	return Command
 end
 
 function Parser:ParseStatement()
-	Logger:PrintTable(Parser.Token)
-	if Parser.Token.Kind == "Ident" then
+	if Parser.Token.Kind == "Ident" or Parser.Token.Kind == "Variable" then
 		return Parser:ParseCommand()
-	else
-		Logger:Error("No handler for token %s", Parser.Token.Kind)
 	end
+
+	if Parser.Token.Kind == "Keyword" then
+		Logger:Error("Keyword '%s' is not implemented yet", Parser.Token.Value)
+	end
+
+	Logger:Error("No handler for token %s", Parser.Token.Kind)
 end
 
 function Parser:Parse()
