@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,6 +96,14 @@ static char *CroshBashTokenKindToString(BashTokenKind Kind) {
                           "Eof"};
 
   return Kind >= TOKEN_IDENT && Kind <= TOKEN_EOF ? Names[Kind] : "Unknown";
+}
+
+static char *CroshBashKindToString(BashAstKind Kind) {
+  static char *Names[] = {"Program", "Command",    "Pipeline",   "And",
+                          "Or",      "Background", "Redirection"};
+
+  return Kind >= BASH_AST_PROGRAM && Kind <= BASH_AST_REDIRECTION ? Names[Kind]
+                                                                  : "Unknown";
 }
 
 static BashToken *CroshNewToken(BashTokenKind Kind, char *Value) {
@@ -547,9 +556,120 @@ static BashAst *CroshCompileBashToAst(char *Text) {
   return Ast;
 }
 
-static char *CroshCompileAstToLua(BashAst *Ast) {
-  (void)Ast;
-  return "Meow";
+static int CroshAppendString(char **Buffer, char *Text) {
+  size_t Old = strlen(*Buffer);
+  size_t Len = strlen(Text);
+
+  char *New = realloc(*Buffer, Old + Len + 2);
+  if (!New)
+    return 0;
+
+  memcpy(New + Old, Text, Len);
+  New[Old + Len] = '\0';
+
+  *Buffer = New;
+  return 1;
+}
+
+static int CroshPutFormatted(char **Buffer, char *Format, ...) {
+  va_list Args;
+  va_start(Args, Format);
+
+  va_list Copy;
+  va_copy(Copy, Args);
+  int Length = vsnprintf(NULL, 0, Format, Copy);
+  va_end(Copy);
+
+  if (Length < 0) {
+    va_end(Args);
+    return 0;
+  }
+
+  size_t Old = strlen(*Buffer);
+  char *New = realloc(*Buffer, Old + Length + 2);
+
+  if (!New) {
+    va_end(Args);
+    return 0;
+  }
+
+  *Buffer = New;
+  vsnprintf(New + Old, Length + 1, Format, Args);
+  New[Old + Length + 1] = '\0';
+
+  va_end(Args);
+  return 1;
+}
+
+static char *CroshReturnFormatted(char *Format, ...) {
+  va_list Args, Copy;
+
+  va_start(Args, Format);
+  va_copy(Copy, Args);
+
+  int Length = vsnprintf(NULL, 0, Format, Copy);
+  va_end(Copy);
+
+  if (Length < 0) {
+    va_end(Args);
+    return NULL;
+  }
+
+  char *Result = malloc((size_t)Length + 1);
+  if (!Result) {
+    va_end(Args);
+    return NULL;
+  }
+
+  vsnprintf(Result, (size_t)Length + 1, Format, Args);
+  va_end(Args);
+
+  return Result;
+}
+
+static char *CroshCompileAstToLua(BashAst *Ast, int Depth) {
+  if (!Ast)
+    return NULL;
+
+  if (Ast->Kind == BASH_AST_PROGRAM) {
+    char *Result = strdup("");
+
+    for (unsigned int i = 0; i < Ast->Program.Count; i++) {
+      char *Lua = CroshCompileAstToLua(Ast->Program.Commands[i], Depth + 1);
+
+      if (!Lua || !CroshAppendString(&Result, Lua)) {
+        free(Lua);
+        free(Result);
+        return NULL;
+      }
+
+      free(Lua);
+    }
+
+    return Result;
+  }
+
+  if (Ast->Kind == BASH_AST_COMMAND) {
+    char *Arguments = strdup("");
+
+    for (unsigned int i = 0; i < Ast->Command.Count; i++) {
+      char *Argument = Ast->Command.Arguments[i];
+      if (i > 0)
+        CroshPutFormatted(&Arguments, ", ");
+      CroshPutFormatted(&Arguments, "\"%s\"", Argument);
+    }
+
+    char *Result = CroshReturnFormatted("Crosh(%s)\n", Arguments);
+    free(Arguments);
+
+    return Result;
+  }
+
+  char Buffer[128];
+  snprintf(Buffer, sizeof(Buffer), "-- Couldn't find handler for %s",
+           CroshBashKindToString(Ast->Kind));
+
+  return strdup(Buffer);
 }
 
 char *CroshCompileBashToLua(char *Text) {
@@ -558,7 +678,7 @@ char *CroshCompileBashToLua(char *Text) {
     return "crosh: failed to compile bash to ast";
   }
 
-  char *LuaCode = CroshCompileAstToLua(Ast);
+  char *LuaCode = CroshCompileAstToLua(Ast, 0);
 
   CroshFreeBashAst(Ast);
   return LuaCode;
