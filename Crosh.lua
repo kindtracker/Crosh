@@ -72,10 +72,11 @@ local Whitespace = {
 	["\r"] = true,
 }
 
-function Tokenizer:NewToken(Kind, Value)
+function Tokenizer:NewToken(Kind, Value, Quote)
 	local Token = {
 		Kind = Kind,
 		Value = Value,
+		Quote = Quote,
 	}
 
 	table.insert(State.Tokens, Token)
@@ -140,7 +141,7 @@ function Tokenizer:ReadQuoted()
 		elseif Tokenizer.Character == Quote then
 			local Value = State.BashCode:sub(Start, Tokenizer.Index - 1)
 
-			Tokenizer:NewToken("String", Value)
+			Tokenizer:NewToken("String", Value, Quote)
 			Tokenizer:Advance(1)
 
 			return
@@ -188,6 +189,12 @@ function Tokenizer:ReadIdent()
 	Tokenizer:NewToken("Ident", Value)
 end
 
+function Tokenizer:ReadComment()
+	while #Tokenizer.Character > 0 and Tokenizer.Character ~= "\n" do
+		Tokenizer:Advance(1)
+	end
+end
+
 function Tokenizer:Tokenize()
 	State.Tokens = {}
 
@@ -203,6 +210,8 @@ function Tokenizer:Tokenize()
 
 		if Tokenizer.Character == "'" or Tokenizer.Character == '"' then
 			Tokenizer:ReadQuoted()
+		elseif Tokenizer.Character == "#" then
+			Tokenizer:ReadComment()
 		elseif Tokenizer:ReadOperator() then
 		else
 			Tokenizer:ReadIdent()
