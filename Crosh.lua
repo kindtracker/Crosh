@@ -68,7 +68,6 @@ local Operators = {
 local Whitespace = {
 	[" "] = true,
 	["\t"] = true,
-	["\n"] = true,
 	["\r"] = true,
 }
 
@@ -133,8 +132,6 @@ function Tokenizer:ReadQuoted()
 	local Quote = Tokenizer.Character
 	local Start = Tokenizer.Index + 1
 
-	Tokenizer:Advance(1)
-
 	while #Tokenizer.Character > 0 do
 		if Tokenizer.Character == "\\" and Quote == '"' then
 			Tokenizer:Advance(2)
@@ -195,12 +192,24 @@ function Tokenizer:ReadComment()
 	end
 end
 
+function Tokenizer:ReadNewline()
+	Tokenizer:NewToken("Newline")
+	Tokenizer:Advance(1)
+end
+
+function Tokenizer:Preprocess(BashCode)
+	BashCode = BashCode:gsub("\\\r\n", "")
+	BashCode = BashCode:gsub("\\\n", "")
+	return BashCode
+end
+
 function Tokenizer:Tokenize()
 	State.Tokens = {}
 
+	State.BashCode = Tokenizer:Preprocess(State.BashCode)
+
 	Tokenizer.Index = 1
 	Tokenizer.Character = State.BashCode:sub(1, 1)
-
 	while #Tokenizer.Character > 0 do
 		Tokenizer:SkipWhitespace()
 
@@ -212,6 +221,8 @@ function Tokenizer:Tokenize()
 			Tokenizer:ReadQuoted()
 		elseif Tokenizer.Character == "#" then
 			Tokenizer:ReadComment()
+		elseif Tokenizer.Character == "\n" then
+			Tokenizer:ReadNewline()
 		elseif Tokenizer:ReadOperator() then
 		else
 			Tokenizer:ReadIdent()
@@ -221,7 +232,44 @@ function Tokenizer:Tokenize()
 	return State.Tokens
 end
 
-function Parser:Parse() end
+function Parser:Advance(Step)
+	Parser.Index = Parser.Index + Step
+	Parser.Token = State.Tokens[Parser.Index]
+end
+
+function Parser:ParseCommand()
+	local Command = {}
+	Command.Kind = "Command"
+	Command.Arguments = {}
+
+	while Parser.Token and Parser.Token.Kind ~= "Newline" do
+		table.insert(Command.Arguments, Parser.Token)
+		Parser:Advance(1)
+	end
+
+	return Command
+end
+
+function Parser:ParseStatement()
+	Logger:PrintTable(Parser.Token)
+	if Parser.Token.Kind == "Ident" then
+		return Parser:ParseCommand()
+	else
+		Logger:Error("No handler for token %s", Parser.Token.Kind)
+	end
+end
+
+function Parser:Parse()
+	State.Ast = {}
+	Parser.Index = 1
+	Parser.Token = {}
+	Parser:Advance(0)
+
+	while Parser.Token do
+		local Statemenet = Parser:ParseStatement()
+		table.insert(State.Ast, Statemenet)
+	end
+end
 
 function LuaGenerator:Generate()
 	State.LuaCode = ""
@@ -234,6 +282,8 @@ function Crosh:CompileBash(BashCode)
 	Logger:PrintTable(State.Tokens)
 
 	Parser:Parse()
+	Logger:PrintTable(State.Ast)
+
 	LuaGenerator:Generate()
 
 	return State.LuaCode
