@@ -177,14 +177,6 @@ echo \$HOME
 #   Hello "World"
 echo "Hello \"World\""
 
-# Needed functions:
-#   Tokenizer:Preprocess
-#
-# Output:
-#   HelloWorld
-echo Hello
-World
-
 # ============================================================
 # 6. VARIABLES
 # ============================================================

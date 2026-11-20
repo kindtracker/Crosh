@@ -175,18 +175,27 @@ end
 
 function Tokenizer:ReadQuoted()
 	local Quote = Tokenizer.Character
-	local Start = Tokenizer.Index + 1
+	local Parts = {}
 
 	Tokenizer:Advance(1)
-	while #Tokenizer.Character > 0 do
-		if Tokenizer.Character == Quote then
-			local String = State.BashCode:sub(Start, Tokenizer.Index - 1)
-			String = Tokenizer:Preprocess(String)
 
-			Tokenizer:NewToken("String", String, Quote)
+	while #Tokenizer.Character > 0 do
+		if Tokenizer.Character == "\\" and Quote == '"' then
+			local NextCharacter = Tokenizer:Peek()
+
+			if NextCharacter == '"' or NextCharacter == "\\" or NextCharacter == "$" or NextCharacter == "`" then
+				table.insert(Parts, NextCharacter)
+				Tokenizer:Advance(2)
+			else
+				table.insert(Parts, "\\")
+				Tokenizer:Advance(1)
+			end
+		elseif Tokenizer.Character == Quote then
+			Tokenizer:NewToken("String", table.concat(Parts), Quote)
 			Tokenizer:Advance(1)
 			return
 		else
+			table.insert(Parts, Tokenizer.Character)
 			Tokenizer:Advance(1)
 		end
 	end
@@ -399,19 +408,108 @@ function Parser:ParseCommand()
 		::continue::
 	end
 
+	Parser.LastCommand = Command
+
 	return Command
 end
 
+function Parser:ParseGroup()
+	local Open = Parser.Token.Value
+	local Close = Open == "(" and ")" or "}"
+
+	local Group = {
+		Kind = Open == "(" and "Subshell" or "Group",
+		Commands = {},
+	}
+
+	Parser:Advance(1)
+
+	while Parser.Token do
+		if Parser.Token.Value == Close then
+			Parser:Advance(1)
+			return Group
+		end
+
+		if Parser.Token.Kind == "Newline" or Parser.Token.Value == ";" then
+			Parser:Advance(1)
+		else
+			local Command = Parser:ParseStatement()
+			table.insert(Group.Commands, Command)
+		end
+	end
+
+	Logger:Error("Expected '%s' to close group", Close)
+end
+
+function Parser:ParseOperator(Left)
+	local Operator = Parser.Token.Value
+
+	local NameTable = {
+		["&&"] = "And",
+		["||"] = "Or",
+		["|"] = "Pipe",
+		["|&"] = "PipeBoth",
+	}
+
+	if Operator == ";" or Operator == "\n" or Operator == "&" then
+		if Operator == "&" then
+			Left.Background = true
+		end
+
+		Parser:Advance(1)
+		return Left
+	end
+
+	if Operator == "!" then
+		Parser:Advance(1)
+
+		local Command = Parser:ParseStatement()
+		return {
+			Kind = "Negate",
+			Operand = Command,
+		}
+	end
+
+	if NameTable[Operator] then
+		Parser:Advance(1)
+
+		if not Parser.Token then
+			Logger:Error("Expected command after '%s'", Operator)
+		end
+
+		local Right = Parser:ParseStatement()
+		return {
+			Kind = NameTable[Operator],
+			Left = Left,
+			Right = Right,
+		}
+	end
+
+	return Left
+end
+
 function Parser:ParseStatement()
-	if Parser.Token.Kind == "Ident" or Parser.Token.Kind == "Variable" then
-		return Parser:ParseCommand()
+	if not Parser.Token then
+		return nil
 	end
 
-	if Parser.Token.Kind == "Keyword" then
+	local Statement
+
+	if Parser.Token.Value == "(" or Parser.Token.Value == "{" then
+		Statement = Parser:ParseGroup()
+	elseif Parser.Token.Kind == "Ident" or Parser.Token.Kind == "Variable" then
+		Statement = Parser:ParseCommand()
+	elseif Parser.Token.Kind == "Keyword" then
 		Logger:Error("Keyword '%s' is not implemented yet", Parser.Token.Value)
+	else
+		Logger:Error("No handler for token %s", Parser.Token.Kind)
 	end
 
-	Logger:Error("No handler for token %s", Parser.Token.Kind)
+	if Parser.Token and Parser.Token.Kind == "Operator" then
+		Statement = Parser:ParseOperator(Statement)
+	end
+
+	return Statement
 end
 
 function Parser:Parse()
@@ -422,7 +520,9 @@ function Parser:Parse()
 
 	while Parser.Token do
 		local Statemenet = Parser:ParseStatement()
-		table.insert(State.Ast, Statemenet)
+		if Statemenet then
+			table.insert(State.Ast, Statemenet)
+		end
 	end
 end
 
@@ -449,9 +549,13 @@ os.execute(%q)
 	)
 end
 
+function LuaGenerator:GenerateOperator(Ast) end
+
 function LuaGenerator:GenerateLua(Ast)
 	if Ast.Kind == "Command" then
 		LuaGenerator:GenerateCommand(Ast)
+	elseif Ast.Kind == "Operator" then
+		LuaGenerator:GenerateOperator(Ast)
 	end
 end
 
