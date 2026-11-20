@@ -1,2 +1,2 @@
 #!/bin/bash
-cc CroshRuntime.c -shared -o CroshRuntime.so
+gcc -fPIC -shared CroshRuntime.c -o CroshRuntime.so -lluajit-5.1

@@ -2,3 +2,4 @@ Build/
 Output/
 
 CroshRuntime.so
+CroshRuntime.o
