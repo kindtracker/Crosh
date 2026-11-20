@@ -11,8 +11,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-char **Argv = NULL;
-
 static int RunCallback(lua_State *Lua, int Index) {
   lua_pushvalue(Lua, Index);
 
@@ -44,24 +42,6 @@ static int ExitCode(int Status) {
     return 128 + WTERMSIG(Status);
 
   return 1;
-}
-
-static int Load(lua_State *Lua) {
-  luaL_checktype(Lua, 1, LUA_TTABLE);
-
-  int Argc = lua_objlen(Lua, 1);
-  Argv = malloc(sizeof(char *) * (Argc + 1));
-
-  for (int i = 0; i < Argc; i++) {
-    lua_rawgeti(Lua, 1, i + 1);
-
-    const char *Value = luaL_checkstring(Lua, -1);
-    Argv[i] = strdup(Value);
-    lua_pop(Lua, 1);
-  }
-
-  Argv[Argc] = NULL;
-  return 0;
 }
 
 static int Run(lua_State *Lua) {
@@ -115,7 +95,7 @@ static int Run(lua_State *Lua) {
 
   if (Pid == 0) {
     execvp(Arguments[0], Arguments);
-    fprintf(stderr, "%s: %s\n", Argv[1], strerror(errno));
+    fprintf(stderr, "%s: %s\n", Arguments[0], strerror(errno));
     _exit(127);
   }
 

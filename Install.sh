@@ -1,10 +1,11 @@
 #!/bin/sh
-
 set -e
 
 PREFIX="${PREFIX:-/usr/local}"
 INSTALL_DIR="$PREFIX/bin"
 CROSH_DIR="."
+
+bash Build.sh
 
 mkdir -p "$INSTALL_DIR"
 cp "$CROSH_DIR/Crosh.lua" "$INSTALL_DIR/crosh.lua"

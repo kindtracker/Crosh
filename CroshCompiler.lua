@@ -545,10 +545,14 @@ function LuaGenerator:IndentLess()
 end
 
 function LuaGenerator:Random()
-  local Characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_1234567890"
+  local Characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
   local Result = {}
 
   for Idx = 1, 16 do
+    if Idx > 1 then
+      Characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_1234567890"
+    end
+
     local RandomIndex = math.random(#Characters)
     Result[Idx] = Characters:sub(RandomIndex, RandomIndex)
   end
