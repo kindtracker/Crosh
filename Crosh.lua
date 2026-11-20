@@ -177,15 +177,14 @@ function Tokenizer:ReadQuoted()
 	local Quote = Tokenizer.Character
 	local Start = Tokenizer.Index + 1
 
+	Tokenizer:Advance(1)
 	while #Tokenizer.Character > 0 do
-		if Tokenizer.Character == "\\" and Quote == '"' then
-			Tokenizer:Advance(2)
-		elseif Tokenizer.Character == Quote then
-			local Value = State.BashCode:sub(Start, Tokenizer.Index - 1)
+		if Tokenizer.Character == Quote then
+			local String = State.BashCode:sub(Start, Tokenizer.Index - 1)
+			String = Tokenizer:Preprocess(String)
 
-			Tokenizer:NewToken("String", Value, Quote)
+			Tokenizer:NewToken("String", String, Quote)
 			Tokenizer:Advance(1)
-
 			return
 		else
 			Tokenizer:Advance(1)
@@ -196,7 +195,8 @@ function Tokenizer:ReadQuoted()
 end
 
 function Tokenizer:ReadIdent()
-	local Start = Tokenizer.Index
+	local Parts = {}
+	local HadEscape = false
 
 	while #Tokenizer.Character > 0 do
 		if Whitespace[Tokenizer.Character] or Tokenizer.Character == "\n" then
@@ -219,32 +219,38 @@ function Tokenizer:ReadIdent()
 			end
 		end
 
-		if IsOperator then
-			break
-		end
-
-		if Tokenizer.Character == "'" or Tokenizer.Character == '"' then
+		if IsOperator or Tokenizer.Character == "'" or Tokenizer.Character == '"' then
 			break
 		end
 
 		if Tokenizer.Character == "\\" then
+			HadEscape = true
+
+			local NextCharacter = Tokenizer:Peek()
+
+			if NextCharacter == "" then
+				Logger:Error("Unexpected end of input after escape")
+			end
+
+			table.insert(Parts, NextCharacter)
 			Tokenizer:Advance(2)
 		else
+			table.insert(Parts, Tokenizer.Character)
 			Tokenizer:Advance(1)
 		end
 	end
 
-	if Tokenizer.Index == Start then
+	if #Parts == 0 then
 		Logger:Error("Unexpected character: %s", Tokenizer.Character)
 	end
 
-	local Value = State.BashCode:sub(Start, Tokenizer.Index - 1)
+	local Value = table.concat(Parts)
 
-	if Value:sub(1, 1) == "$" then
+	if not HadEscape and Value:sub(1, 1) == "$" then
 		Tokenizer:NewToken("Variable", Value:sub(2))
-	elseif Value:match("^%d+$") and (Tokenizer:Match(">") or Tokenizer:Match("<")) then
+	elseif not HadEscape and Value:match("^%d+$") and (Tokenizer:Match(">") or Tokenizer:Match("<")) then
 		Tokenizer:NewToken("Number", Value)
-	elseif Keywords[Value] then
+	elseif not HadEscape and Keywords[Value] then
 		Tokenizer:NewToken("Keyword", Value)
 	else
 		Tokenizer:NewToken("Ident", Value)
@@ -263,9 +269,40 @@ function Tokenizer:ReadNewline()
 end
 
 function Tokenizer:Preprocess(BashCode)
-	BashCode = BashCode:gsub("\\\r\n", "")
-	BashCode = BashCode:gsub("\\\n", "")
-	return BashCode
+	local Result = {}
+	local Index = 1
+	local Quote = nil
+
+	while Index <= #BashCode do
+		local Character = BashCode:sub(Index, Index)
+		local NextCharacter = BashCode:sub(Index + 1, Index + 1)
+
+		if Character == "\\" and Quote ~= "'" then
+			if NextCharacter == "\n" then
+				Index = Index + 2
+			elseif NextCharacter == "\r" and BashCode:sub(Index + 2, Index + 2) == "\n" then
+				Index = Index + 3
+			else
+				table.insert(Result, Character)
+				table.insert(Result, NextCharacter)
+				Index = Index + 2
+			end
+		elseif Character == "'" or Character == '"' then
+			if not Quote then
+				Quote = Character
+			elseif Quote == Character then
+				Quote = nil
+			end
+
+			table.insert(Result, Character)
+			Index = Index + 1
+		else
+			table.insert(Result, Character)
+			Index = Index + 1
+		end
+	end
+
+	return table.concat(Result)
 end
 
 function Tokenizer:Tokenize()
@@ -396,7 +433,11 @@ end
 function LuaGenerator:GenerateCommand(Ast)
 	local Arguments = {}
 	for _, Token in ipairs(Ast.Arguments) do
-		table.insert(Arguments, Token.Value)
+		local Value = Token.Value
+		if Token.Quote then
+			Value = Token.Quote .. Value .. Token.Quote
+		end
+		table.insert(Arguments, Value)
 	end
 
 	local Command = table.concat(Arguments, " ")
@@ -426,12 +467,13 @@ function Crosh:CompileBash(BashCode)
 	State.BashCode = BashCode
 
 	Tokenizer:Tokenize()
-	Logger:PrintTable(State.Tokens)
+	-- Logger:PrintTable(State.Tokens)
 
 	Parser:Parse()
 	Logger:PrintTable(State.Ast)
 
 	LuaGenerator:Generate()
+	print(State.LuaCode)
 
 	return State.LuaCode
 end
