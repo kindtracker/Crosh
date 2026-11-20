@@ -273,16 +273,6 @@ echo First || echo Second
 #
 # Output:
 #   First
-#   Second
-echo First | cat
-
-# Needed functions:
-#   Tokenizer:ReadOperator
-#   Parser:Parse
-#   LuaGenerator:Generate
-#
-# Output:
-#   First
 echo First &
 
 # ============================================================

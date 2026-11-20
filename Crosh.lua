@@ -389,8 +389,37 @@ function Parser:Parse()
 	end
 end
 
+function LuaGenerator:PutFormatted(...)
+	State.LuaCode = State.LuaCode .. string.format(...)
+end
+
+function LuaGenerator:GenerateCommand(Ast)
+	local Arguments = {}
+	for _, Token in ipairs(Ast.Arguments) do
+		table.insert(Arguments, Token.Value)
+	end
+
+	local Command = table.concat(Arguments, " ")
+	LuaGenerator:PutFormatted(
+		[[
+os.execute(%q)
+]],
+		Command
+	)
+end
+
+function LuaGenerator:GenerateLua(Ast)
+	if Ast.Kind == "Command" then
+		LuaGenerator:GenerateCommand(Ast)
+	end
+end
+
 function LuaGenerator:Generate()
 	State.LuaCode = ""
+
+	for _, Ast in ipairs(State.Ast) do
+		LuaGenerator:GenerateLua(Ast)
+	end
 end
 
 function Crosh:CompileBash(BashCode)
