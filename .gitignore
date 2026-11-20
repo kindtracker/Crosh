@@ -1,6 +1,4 @@
 Build/
 Output/
 
-error.log
-output.log
-output.txt
+CroshRuntime.so

@@ -423,7 +423,7 @@ function Parser:ParseGroup()
   local Close = Open == "(" and ")" or "}"
 
   local Group = {
-    Kind = Open == "(" and "Subshell" or "Group",
+    Kind = Open == "(" and "SubShell" or "Group",
     Commands = {},
   }
 
@@ -571,7 +571,7 @@ function LuaGenerator:GenerateCommand(Ast)
   local Command = table.concat(Arguments, " ")
   local Status = LuaGenerator:Random()
 
-  LuaGenerator:PutFormatted("local %s = os.execute(%q)\n", Status, Command)
+  LuaGenerator:PutFormatted("local %s = CroshRuntime.Run(%q)\n", Status, Command)
   if Ast.Negate then
     LuaGenerator:PutFormatted("%s = not %s\n", Status, Status)
   end
@@ -600,8 +600,8 @@ if %s%s then
     for _, Command in ipairs(Ast.Commands) do
       LuaGenerator:GenerateLua(Command)
     end
-  elseif Ast.Kind == "Subshell" then
-    LuaGenerator:PutFormatted("CroshRuntime:Subshell(function()\n")
+  elseif Ast.Kind == "SubShell" then
+    LuaGenerator:PutFormatted("CroshRuntime.SubShell(function()\n")
 
     for _, Command in ipairs(Ast.Commands) do
       LuaGenerator:GenerateLua(Command)
@@ -609,7 +609,7 @@ if %s%s then
 
     LuaGenerator:PutFormatted("end)\n")
   elseif Ast.Kind == "Pipe" then
-    LuaGenerator:PutFormatted("CroshRuntime:Pipe(function()\n")
+    LuaGenerator:PutFormatted("CroshRuntime.Pipe(function()\n")
     LuaGenerator:IndentMore()
     LuaGenerator:GenerateLua(Ast.Left)
     LuaGenerator:IndentLess()
@@ -622,7 +622,7 @@ if %s%s then
     LuaGenerator:PutFormatted("end, false)\n")
     LuaGenerator:PutFormatted(" \n")
   elseif Ast.Kind == "PipeBoth" then
-    LuaGenerator:PutFormatted("CroshRuntime:Pipe(function()\n")
+    LuaGenerator:PutFormatted("CroshRuntime.Pipe(function()\n")
     LuaGenerator:IndentMore()
     LuaGenerator:GenerateLua(Ast.Left)
     LuaGenerator:IndentLess()
@@ -644,7 +644,7 @@ function LuaGenerator:GenerateLua(Ast)
     ["Pipe"] = true,
     ["PipeBoth"] = true,
     ["Negate"] = true,
-    ["Subshell"] = true,
+    ["SubShell"] = true,
     ["Group"] = true,
   }
 
@@ -656,7 +656,9 @@ function LuaGenerator:GenerateLua(Ast)
 end
 
 function LuaGenerator:Generate()
-  State.LuaCode = ""
+  State.LuaCode = [[
+local CroshRuntime = require("CroshRuntime")
+]] .. "\n"
 
   for _, Ast in ipairs(State.Ast) do
     LuaGenerator:GenerateLua(Ast)
