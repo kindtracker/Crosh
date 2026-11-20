@@ -1,5 +1,6 @@
 Build/
 Output/
 
+crosh
+
 CroshRuntime.so
-CroshRuntime.o
