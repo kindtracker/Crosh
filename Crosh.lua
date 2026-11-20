@@ -354,6 +354,11 @@ function Parser:ParseCommand()
   Command.Arguments = {}
   Command.Redirections = {}
 
+  if Parser.NegateCommand then
+    Command.Negate = true
+    Parser.NegateCommand = false
+  end
+
   while Parser.Token and Parser.Token.Kind ~= "Newline" do
     if Parser.Token.Kind == "Keyword" then
       Parser.Token.Kind = "Ident"
@@ -458,16 +463,9 @@ function Parser:ParseOperator(Left)
 
     Parser:Advance(1)
     return Left
-  end
-
-  if Operator == "!" then
+  elseif Operator == "!" then
     Parser:Advance(1)
-
-    local Command = Parser:ParseStatement()
-    return {
-      Kind = "Negate",
-      Operand = Command,
-    }
+    Parser.NegateCommand = true
   end
 
   if NameTable[Operator] then
@@ -494,13 +492,16 @@ function Parser:ParseStatement()
   end
 
   local Statement
-
   if Parser.Token.Value == "(" or Parser.Token.Value == "{" then
     Statement = Parser:ParseGroup()
   elseif Parser.Token.Kind == "Ident" or Parser.Token.Kind == "Variable" then
     Statement = Parser:ParseCommand()
   elseif Parser.Token.Kind == "Keyword" then
     Logger:Error("Keyword '%s' is not implemented yet", Parser.Token.Value)
+  elseif Parser.Token.Kind == "Operator" then
+    Parser:ParseOperator()
+  elseif Parser.Token.Kind == "Newline" then
+    Parser:Advance(1)
   else
     Logger:Error("No handler for token %s", Parser.Token.Kind)
   end
@@ -546,33 +547,29 @@ function LuaGenerator:GenerateCommand(Ast)
   local Arguments = {}
   for _, Token in ipairs(Ast.Arguments) do
     local Value = Token.Value
+
     if Token.Quote then
       Value = Token.Quote .. Value .. Token.Quote
     end
+
     table.insert(Arguments, Value)
   end
 
   local Command = table.concat(Arguments, " ")
-  Command = Command .. (Ast.Background and " &" or "")
-  LuaGenerator:PutFormatted(
-    [[
-os.execute(%q)
-]],
-    Command
-  )
+  local Status = self:Random()
+
+  LuaGenerator:PutFormatted("local %s = os.execute(%q)\n", Status, Command)
+
+  if Ast.Negate then
+    LuaGenerator:PutFormatted("%s = not %s\n", Status, Status)
+  end
+
+  return Status
 end
 
 function LuaGenerator:GenerateOperator(Ast)
   if Ast.Kind == "And" or Ast.Kind == "Or" then
-    local Status = LuaGenerator:Random()
-
-    LuaGenerator:PutFormatted(
-      [[
-local %s = 
-]],
-      Status
-    )
-    LuaGenerator:GenerateLua(Ast.Left)
+    local Status = LuaGenerator:GenerateLua(Ast.Left)
     LuaGenerator:PutFormatted(
       [[
 if %s%s then
@@ -582,6 +579,10 @@ if %s%s then
     )
     LuaGenerator:GenerateLua(Ast.Right)
     LuaGenerator:PutFormatted("end")
+  elseif Ast.Kind == "Group" then
+    for _, Command in ipairs(Ast.Commands) do
+      LuaGenerator:GenerateLua(Command)
+    end
   end
 end
 
@@ -597,9 +598,9 @@ function LuaGenerator:GenerateLua(Ast)
   }
 
   if Ast.Kind == "Command" then
-    LuaGenerator:GenerateCommand(Ast)
+    return LuaGenerator:GenerateCommand(Ast)
   elseif Operators[Ast.Kind] then
-    LuaGenerator:GenerateOperator(Ast)
+    return LuaGenerator:GenerateOperator(Ast)
   end
 end
 
