@@ -575,7 +575,7 @@ function LuaGenerator:GenerateCommand(Ast)
   local Command = table.concat(Arguments, " ")
   local Status = LuaGenerator:Random()
 
-  LuaGenerator:PutFormatted("local %s = CroshRuntime.Run(%q)\n", Status, Command)
+  LuaGenerator:PutFormatted("local %s = Crosh(%q)\n", Status, Command)
   if Ast.Negate then
     LuaGenerator:PutFormatted("%s = not %s\n", Status, Status)
   end
