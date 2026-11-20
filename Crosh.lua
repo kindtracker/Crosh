@@ -528,7 +528,20 @@ function Parser:Parse()
 end
 
 function LuaGenerator:PutFormatted(...)
-  State.LuaCode = State.LuaCode .. string.format(...)
+  LuaGenerator.Indent = LuaGenerator.Indent or 0
+
+  local Output = string.format(...)
+  for Line in Output:gmatch("[^\n]+") do
+    State.LuaCode = State.LuaCode .. string.rep("  ", LuaGenerator.Indent) .. Line .. "\n"
+  end
+end
+
+function LuaGenerator:IndentMore()
+  LuaGenerator.Indent = LuaGenerator.Indent + 1
+end
+
+function LuaGenerator:IndentLess()
+  LuaGenerator.Indent = math.max(0, LuaGenerator.Indent - 1)
 end
 
 function LuaGenerator:Random()
@@ -556,10 +569,9 @@ function LuaGenerator:GenerateCommand(Ast)
   end
 
   local Command = table.concat(Arguments, " ")
-  local Status = self:Random()
+  local Status = LuaGenerator:Random()
 
   LuaGenerator:PutFormatted("local %s = os.execute(%q)\n", Status, Command)
-
   if Ast.Negate then
     LuaGenerator:PutFormatted("%s = not %s\n", Status, Status)
   end
@@ -577,12 +589,51 @@ if %s%s then
       Ast.Kind == "Or" and "not " or "",
       Status
     )
+
+    LuaGenerator:IndentMore()
     LuaGenerator:GenerateLua(Ast.Right)
+    LuaGenerator:IndentLess()
+
     LuaGenerator:PutFormatted("end")
+    LuaGenerator:PutFormatted(" \n")
   elseif Ast.Kind == "Group" then
     for _, Command in ipairs(Ast.Commands) do
       LuaGenerator:GenerateLua(Command)
     end
+  elseif Ast.Kind == "Subshell" then
+    LuaGenerator:PutFormatted("CroshRuntime:Subshell(function()\n")
+
+    for _, Command in ipairs(Ast.Commands) do
+      LuaGenerator:GenerateLua(Command)
+    end
+
+    LuaGenerator:PutFormatted("end)\n")
+  elseif Ast.Kind == "Pipe" then
+    LuaGenerator:PutFormatted("CroshRuntime:Pipe(function()\n")
+    LuaGenerator:IndentMore()
+    LuaGenerator:GenerateLua(Ast.Left)
+    LuaGenerator:IndentLess()
+
+    LuaGenerator:PutFormatted("end, function()\n")
+    LuaGenerator:IndentMore()
+    LuaGenerator:GenerateLua(Ast.Right)
+    LuaGenerator:IndentLess()
+
+    LuaGenerator:PutFormatted("end, false)\n")
+    LuaGenerator:PutFormatted(" \n")
+  elseif Ast.Kind == "PipeBoth" then
+    LuaGenerator:PutFormatted("CroshRuntime:Pipe(function()\n")
+    LuaGenerator:IndentMore()
+    LuaGenerator:GenerateLua(Ast.Left)
+    LuaGenerator:IndentLess()
+
+    LuaGenerator:PutFormatted("end, function()\n")
+    LuaGenerator:IndentMore()
+    LuaGenerator:GenerateLua(Ast.Right)
+    LuaGenerator:IndentLess()
+
+    LuaGenerator:PutFormatted("end, true)\n")
+    LuaGenerator:PutFormatted(" \n")
   end
 end
 
